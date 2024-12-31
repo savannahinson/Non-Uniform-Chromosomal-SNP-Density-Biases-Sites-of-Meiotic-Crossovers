@@ -1,0 +1,143 @@
+### Wilcoxon Rank Sum Test - looking for significant differences in DDHi parentage within SNP dense regions
+# assumes not normal distribution
+library(ggplot2)
+library(dplyr)
+library(reshape)
+library(melt)
+library(ggridges)
+library(tidyr)
+
+
+ddhi_parentage <- readRDS("ddhi_parentage.rds")
+colnames(ddhi_parentage)
+
+# Split into two groups based on "High" and "Low" in the fly names
+flies_high <- ddhi_parentage[grep("High", ddhi_parentage$`Recombinant fly`), ]
+flies_low <- ddhi_parentage[grep("Low", ddhi_parentage$`Recombinant fly`), ]
+
+# View the first few rows of each group
+head(flies_high)
+head(flies_low)
+
+# Divide into each region in order to compare 
+A_high <- flies_high[ ,2]
+B_high <- flies_high[ ,3]
+C_high <- flies_high[ ,4]
+D_high <- flies_high[ ,5]
+E_high <- flies_high[ ,6]
+
+A_low <- flies_low[ ,2]
+B_low <- flies_low[ ,3]
+C_low <- flies_low[ ,4]
+D_low <- flies_low[ ,5]
+E_low <- flies_low[ ,6]
+
+# combine high and low for each region in order to compare within the region between activity level
+A_combined <-cbind(A_high,A_low)
+B_combined <-cbind(B_high,B_low)
+C_combined <-cbind(C_high,C_low)
+D_combined <-cbind(D_high,D_low)
+E_combined <-cbind(E_high,E_low)
+
+# rename the columns for clarity
+colnames(A_combined) <- c("high activity", "low activity")
+colnames(B_combined) <- c("high activity", "low activity")
+colnames(C_combined) <- c("high activity", "low activity")
+colnames(D_combined) <- c("high activity", "low activity")
+colnames(E_combined) <- c("high activity", "low activity")
+
+# Run Wilcoxon signed-rank test on the combined data frame
+A_wilcox <- wilcox.test(A_combined$`high activity`, A_combined$`low activity`)
+B_wilcox <- wilcox.test(B_combined$`high activity`, B_combined$`low activity`)
+C_wilcox <- wilcox.test(C_combined$`high activity`, C_combined$`low activity`)
+D_wilcox <- wilcox.test(D_combined$`high activity`, D_combined$`low activity`)
+E_wilcox <- wilcox.test(E_combined$`high activity`, E_combined$`low activity`)
+
+# View the test result
+A_wilcox
+B_wilcox
+C_wilcox
+D_wilcox
+E_wilcox
+
+# Store pvalues and perform Bonferroni correction for multiple comparisons
+p_values <- c(
+  wilcox.test(A_combined$`high activity`, A_combined$`low activity`)$p.value,
+  wilcox.test(B_combined$`high activity`, B_combined$`low activity`)$p.value,
+  wilcox.test(C_combined$`high activity`, C_combined$`low activity`)$p.value,
+  wilcox.test(D_combined$`high activity`, D_combined$`low activity`)$p.value,
+  wilcox.test(E_combined$`high activity`, E_combined$`low activity`)$p.value
+)
+
+# Apply Bonferroni correction
+p_adjusted_ddhiparentage <- p.adjust(p_values, method = "bonferroni")
+
+# View adjusted p-values
+p_adjusted_ddhiparentage
+# saveRDS(p_adjusted_ddhiparentage,"ddhi_parentage_pvalues.rds")
+p_adjusted_ddhiparentage <- readRDS("ddhi_parentage_pvalues.rds")
+
+### Plotting results
+# Combine them into a single vector with 42 "High" values followed by 42 "Low" values
+A_combined_vector <- c(A_combined[, 1], A_combined[, 2])
+B_combined_vector <- c(B_combined[, 1], B_combined[, 2])
+C_combined_vector <- c(C_combined[, 1], C_combined[, 2])
+D_combined_vector <- c(D_combined[, 1], D_combined[, 2])
+E_combined_vector <- c(E_combined[, 1], E_combined[, 2])
+
+# Now construct the data frame
+data <- data.frame(
+  Fly = rep(c("High", "Low"), each = 42),  # 42 High and 42 Low
+  A = A_combined_vector,  # 84 values (42 for High, 42 for Low)
+  B = B_combined_vector,
+  C = C_combined_vector,
+  D = D_combined_vector,
+  E = E_combined_vector
+)
+
+# Transform the data into long format
+data_long <- pivot_longer(data, 
+                          cols = -Fly,  # All columns except 'Fly'
+                          names_to = "Region",  # New column name for original column names
+                          values_to = "Fraction")  # New column name for original values
+
+# Add 'activity' column to data_long based on the 'Fly' column
+data_long$activity <- ifelse(grepl("High", data_long$Fly, ignore.case = TRUE), 
+                             "High activity recombinants", 
+                             "Low activity recombinants")
+
+
+# Calculate means and SEM for each region and category (High, Low)
+summary_data <- data_long %>%
+  group_by(Region, activity) %>%
+  summarise(
+    Mean = mean(Fraction),
+    SEM = sd(Fraction) / sqrt(n())
+  )
+
+# Create a column that specifies the activity for each bar
+summary_data$activity <- rep(c("High activity recombinants", "Low activity recombinants"), 
+                             length.out = nrow(summary_data))
+
+# Create a column that specifies the region for each bar
+summary_data$group <- rep(c("A", "A", "B", "B", "C", "C", "D", "D", "E", "E"), 
+                             length.out = nrow(summary_data))
+
+# Ensure 'Region' in data_long is a factor
+# data_long$Region <- factor(data_long$Region, levels = unique(summary_data$Region))
+
+# Plotting
+ggplot(summary_data, aes(x = Region, y = Mean, fill = activity)) + 
+  geom_bar(stat = "identity", color = "black", position = position_dodge(width = 0.7), width = 0.7) +   
+  geom_violin(data = data_long, aes(x = Region, y = Fraction, fill = activity), 
+              position = position_dodge(width = 0.7), width = 1, alpha = 0.3) +  # Wider violin plot
+  geom_jitter(data = data_long, aes(x = Region, y = Fraction, color = activity), 
+              position = position_jitterdodge(dodge.width = 0.7, jitter.width = 0.1), shape = 1, size = 2) +  # Jitter points
+  scale_fill_manual(values = c("High activity recombinants" = "darkgray",
+                               "Low activity recombinants" = "lightgray"),                     
+                    name = "Recombinant Type") +  # Add legend title   
+  scale_color_manual(values = c("High activity recombinants" = "black",
+                                "Low activity recombinants" = "black"),                       
+                     guide = guide_legend(title = "Recombinant Type")) +  # Color for jitter points   
+  theme_minimal() +   
+  theme(axis.text.x = element_text(vjust = 0.5, hjust = 1))  # Rotate x-axis labels
